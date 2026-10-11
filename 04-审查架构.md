@@ -1,0 +1,290 @@
+# 审核框架设计文档（MVA-Audit v0.1）
+
+> 上游依据：`01-requirements.md`、`02-architecture.md`、`03-audit-requirements.md`。
+> 本文定义**审核包怎么实现**：包结构、数据契约、模块依赖、流水线编排、产物布局、CLI。
+
+---
+
+## 1. 设计原则
+
+1. **零侵入**：审核包**只读** MVA 产物（Episode JSONL + 复盘报告），不修改 MVA 业务代码。
+2. **契约优先**：审核模块间只通过 `contracts.py` 通信（沿用架构文档 §2）。
+3. **离线优先**：所有计算在本地完成，零网络依赖；可视化是单文件 HTML，可直接 `open`。
+4. **可复现**：同输入必须得到同输出；所有随机性显式 `seed`。
+5. **可追溯**：每个审核动作都写 `_audit_log.jsonl`（需求 L-1）。
+6. **诚实标注**：所有"金标准缺失"或"样本不足"的判定都写 UNVERIFIED，**不假装验证过**。
+
+---
+
+## 2. 包结构
+
+```
+src/emotion_computing/
+├── audit/                          # ★ 本工程新增
+│   ├── __init__.py                 # 对外 API
+│   ├── metrics.py                  # CCC, RMSE, MAE, F1, Krippendorff α
+│   ├── data_audit.py               # D-1/D-2/D-3
+│   ├── module_evaluator.py         # M-1/M-2 逐模块评估 + 消融
+│   ├── modality_diagnostic.py      # M-3 破坏者识别
+│   ├── failure_attribution.py      # F-1/F-2/F-3
+│   ├── log.py                      # L-1 审核日志
+│   ├── report.py                   # Markdown 审核报告
+│   ├── viz.py                      # HTML dashboard（含 Chart.js CDN 替代）
+│   └── runner.py                   # AuditRunner 统一编排
+├── contracts.py                    # ★ 追加审核层契约（不改既有）
+├── pipeline.py                     # ★ 追加 attach_audit_hook（不改既有行为）
+└── cli.py                          # ★ 新增 audit 子命令
+```
+
+---
+
+## 3. 跨模块数据契约（追加到 `contracts.py`）
+
+> 既有契约（ModalityObservation / PerceptionFrame / StressSample / Forecast / CapacityAssessment / Episode / ActionDecision 等）一字不改；下面只追加新类型。
+
+```python
+# ---------- 审核输入 ----------
+@dataclass
+class GoldLabel:
+    sample_id: str
+    modality_labels: dict[str, float]   # face/speech/text 各自金标准
+    stress: float                       # 端到端金标准紧张度
+    state: str                          # "OK" | "WATCH" | "PAUSE"
+    action_appropriateness: int         # 1-5
+    confidence: float                   # 标注者置信度
+    annotator_id: str
+    notes: str = ""
+
+@dataclass
+class GoldDataset:
+    name: str
+    modality_availability: dict[str, float]  # 模态可用率统计
+    samples: tuple[GoldLabel, ...]
+
+# ---------- 模块评估 ----------
+@dataclass
+class ModuleMetric:
+    module: str
+    metric_name: str
+    value: float
+    n: int
+    threshold: float | None
+    status: str                         # "ok" | "warn" | "fail" | "unverified"
+
+@dataclass
+class ModuleEvaluation:
+    module: str
+    metrics: tuple[ModuleMetric, ...]
+    sample_failures: tuple[str, ...]    # 失败 sample_id 列表
+
+# ---------- 模态诊断 ----------
+@dataclass
+class ModalityAttribution:
+    sample_id: str
+    face: float
+    speech: float
+    text: float
+    fused: float
+    gold: float
+    dominant_modality: str
+    saboteur: str | None                # 高置信度错误的模态
+    reason: str
+
+# ---------- 失败归因 ----------
+FAILURE_TYPES: tuple[str, ...] = (
+    "perception_failure", "modality_sabotage", "slow_eval_failure",
+    "memory_interference", "action_failure",
+    "data_problem", "combined_failure",
+)
+
+@dataclass
+class FailureCase:
+    sample_id: str
+    error: float
+    system_attribution: str             # 系统自动归因
+    human_attribution: str | None       # 人工修正
+    correction_reason: str | None
+    modality_attribution: ModalityAttribution | None
+    evidence: dict[str, Any]            # 用于解释判定的快照
+
+@dataclass
+class FailureDistribution:
+    counts: dict[str, int]
+    percentages: dict[str, float]
+    top_repair: tuple[str, ...]         # 推荐的修复方向
+
+# ---------- 审核日志 ----------
+@dataclass
+class AuditLogEntry:
+    log_id: str
+    audit_id: str
+    reviewer_id: str
+    sample_id: str
+    system_attribution: str
+    human_attribution: str | None
+    correction_reason: str | None
+    follow_up: str
+    timestamp: str
+
+# ---------- 审核报告 ----------
+@dataclass
+class AuditReport:
+    audit_id: str
+    generated_at: str
+    dataset_name: str
+    n_samples: int
+    n_errors: int
+    data_qa: dict
+    module_evaluations: tuple[ModuleEvaluation, ...]
+    ablation: dict[str, float]
+    failure_distribution: FailureDistribution
+    failure_cases: tuple[FailureCase, ...]
+    iterations: tuple[dict, ...]        # 历史迭代对比
+    disclaimer: str
+```
+
+---
+
+## 4. 模块依赖图
+
+```
+GoldDataset (来自外部标注或 RAVDESS 派生)
+     │
+     ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ data_audit   │   │   metrics    │   │     log      │
+│  (D-1..D-3)  │   │ CCC/RMSE/α  │   │  (L-1)       │
+└──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+       │                  │                  │
+       ▼                  ▼                  ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ module_eval  │   │  modality_   │   │ failure_attr │
+│  (M-1/M-2)   │   │  diagnostic  │   │   (F-1..3)   │
+│              │──▶│   (M-3)      │──▶│              │
+└──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+       │                  │                  │
+       └────────┬─────────┴──────────────────┘
+                ▼
+         ┌──────────────┐
+         │   runner     │   AuditRunner 编排
+         └──────┬───────┘
+                ▼
+         ┌──────────────┐
+         │   report +   │   Markdown + HTML
+         │     viz      │
+         └──────────────┘
+```
+
+---
+
+## 5. 流水线编排（AuditRunner）
+
+```python
+class AuditRunner:
+    def __init__(self, dataset, mva_outputs, audit_dir, config=None): ...
+
+    def run(self) -> AuditReport:
+        # 1. 数据层审核
+        data_qa = data_audit.audit(self.dataset)
+
+        # 2. 模块级评估（依赖 D-1 通过）
+        if data_qa.alpha < 0.67:
+            return self._abort("标注一致性不足")    # 需求 D-1 失败信号
+
+        module_evals = module_evaluator.evaluate(self.dataset, self.mva_outputs)
+
+        # 3. 模态级诊断
+        attributions = modality_diagnostic.attribute(self.dataset, self.mva_outputs)
+
+        # 4. 失败归因
+        failures = failure_attribution.attribute(self.dataset, attributions)
+
+        # 5. 报告
+        report = report.build(self.audit_id, ...)
+        report_path = self.write_markdown(report)
+        dashboard_path = self.write_dashboard(report)
+        return report
+```
+
+执行顺序严格按 03 文档第 0 章"业务问题"映射。任一步骤失败 → 报告显式标 `unverified`，绝不静默通过。
+
+---
+
+## 6. 产物布局
+
+```
+data/audit/
+├── <audit_id>/
+│   ├── audit_report.md         # 完整 Markdown 报告
+│   ├── dashboard.html          # 单文件可视化（≤ 5 MB）
+│   ├── data_qa_report.md       # D-1/D-2/D-3 子报告
+│   ├── data_distribution.md    # D-3 分布表
+│   ├── failure_distribution.md # F-3 失败分布
+│   ├── module_evaluations.json # M-1 各模块指标原始数据
+│   ├── ablation_results.json   # M-2 消融结果
+│   ├── modality_attributions.json  # M-3 每样本
+│   └── failure_cases.jsonl     # F-1 每个错误样本的归因
+├── _iterations.jsonl           # I-2 跨迭代历史
+└── _audit_log.jsonl            # L-1 审核日志
+```
+
+---
+
+## 7. 与 MVA 业务代码的接入点
+
+| 接入点 | 改动 | 风险 |
+|---|---|---|
+| `contracts.py` | **追加**新 dataclass，不改既有字段 | 零 |
+| `pipeline.SessionPipeline.step` | **追加** `attach_audit_hook(callback)`，不调用时无副作用 | 零 |
+| `memory.store.EpisodeStore` | **追加** `audit_dir` 字段与 `write_audit_artifacts()` 方法 | 零 |
+| `cli.py` | **追加** `audit` 子命令 | 零 |
+
+业务代码语义完全不变；新功能通过 opt-in 启用。
+
+---
+
+## 8. 可视化设计
+
+### dashboard.html（单文件）
+
+- **零外部 CDN**：Chart.js 内嵌（v4，约 80 KB）
+- **三大视图**：
+  1. 失败分布饼图 + 修复优先级柱图
+  2. 各模块指标雷达图（CCC/RMSE/MAE/P@3/ActionScore）
+  3. 失败样本时间线（按 t 排，错判样本高亮）
+- **单样本审核卡**：内嵌可点击的样本详情
+- **导出**：右上角"导出 CSV"按钮，失败案例全量下载
+
+### ASCII fallback
+
+CLI `--no-viz` 时输出 Markdown 表格（同样数字、同样顺序），方便无浏览器环境。
+
+---
+
+## 9. 测试策略
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/test_audit_metrics.py` | CCC/RMSE/MAE/F1/Krippendorff α 数值正确性 |
+| `tests/test_audit_data_audit.py` | D-1 一致性、D-2 抽检记账、D-3 分布统计 |
+| `tests/test_audit_module.py` | M-1 逐模块指标、M-2 消融实验 |
+| `tests/test_audit_diagnostic.py` | M-3 破坏者识别（含正反案例） |
+| `tests/test_audit_failure.py` | F-1 分类、F-2 顺序、F-3 分布汇总 |
+| `tests/test_audit_log.py` | L-1 日志写入 + 追溯链 |
+| `tests/test_audit_report.py` | 报告生成 + 关键字段齐全 |
+| `tests/test_audit_runner.py` | 端到端 runner 流水线 + abort 路径 |
+
+---
+
+## 10. 与 03 文档验收标准的对应
+
+| 验收项 | 实现位置 |
+|---|---|
+| D-1 α ≥ 0.67 否则 abort | `AuditRunner.run` 第一步 |
+| D-2 抽检完成率 ≥ 10% | `data_audit.audit` 输出 `qa_coverage` 字段 |
+| M-1 至少一红 | `ModuleMetric.status == "fail"` 计数 |
+| M-2 5 个消融 | `ablation_results.json` 固定 schema |
+| M-3 每错误样本有 attribution | `modality_attributions.json` 行数 == n_errors |
+| F-3 占比和 = 100% | `FailureDistribution.percentages` 求和断言 |
+| V-1 dashboard.html | `runner.write_dashboard` |
+| L-1 日志 | `_audit_log.jsonl` append |
