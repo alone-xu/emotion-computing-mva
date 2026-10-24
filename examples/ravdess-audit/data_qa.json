@@ -1,0 +1,49 @@
+{
+  "consistency": {
+    "n_annotators": 0,
+    "n_samples": 200,
+    "alpha": 0.0,
+    "kappa": null,
+    "per_class_alpha": {},
+    "verdict": "unverified",
+    "thresholds": {
+      "ok": 0.8,
+      "warn": 0.67
+    }
+  },
+  "spot_check": {
+    "n_sampled": 24,
+    "n_total": 200,
+    "coverage": 0.12,
+    "n_correct": 24,
+    "n_wrong": 0,
+    "n_data_problem": 0,
+    "error_type_dist": {},
+    "error_reason_dist": {}
+  },
+  "distribution": {
+    "n_samples": 200,
+    "class_dist": {
+      "OK": 200
+    },
+    "intensity_dist": {
+      "low": 200,
+      "mid": 0,
+      "high": 0
+    },
+    "modality_availability": {
+      "face": 1.0,
+      "speech": 1.0,
+      "text": 1.0
+    },
+    "length_histogram": {
+      "<1min": 0,
+      "1-5min": 200,
+      "5-15min": 0,
+      "15-60min": 0,
+      ">60min": 0
+    },
+    "small_class_warning": []
+  },
+  "overall_verdict": "unverified"
+}

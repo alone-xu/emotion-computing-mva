@@ -1,0 +1,25 @@
+{
+  "counts": {
+    "perception_failure": 0,
+    "modality_sabotage": 6,
+    "slow_eval_failure": 0,
+    "memory_interference": 0,
+    "action_failure": 0,
+    "data_problem": 0,
+    "combined_failure": 81
+  },
+  "percentages": {
+    "perception_failure": 0.0,
+    "modality_sabotage": 6.9,
+    "slow_eval_failure": 0.0,
+    "memory_interference": 0.0,
+    "action_failure": 0.0,
+    "data_problem": 0.0,
+    "combined_failure": 93.1
+  },
+  "top_repair": [
+    "modality_sabotage → 修改融合策略，增加置信度校准",
+    "memory_interference → 改进检索相关性阈值",
+    "data_problem → 修正标注或剔除模糊样本"
+  ]
+}

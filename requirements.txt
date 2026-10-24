@@ -1,0 +1,24 @@
+# 依赖说明（按你的使用场景挑着装，不必全装）
+#
+#   pip install -e .                      # 最小可跑：只装 numpy，面部/语音/语义自动降级
+#   pip install -e ".[perception]"        # 接真实摄像头/麦克风
+#   pip install -e ".[text]"              # 语义走 transformers（还需 EC_ENABLE_TRANSFORMERS=1）
+#   pip install -e ".[dev]"               # 开发：pytest + ruff
+#
+# 这个文件只是给"不想用 pip install -e"的人准备的等价清单。
+
+# 核心（必需）：全流程的唯一硬依赖
+numpy>=1.24
+
+# ① 感知层 · 真实后端（可选，缺了自动降级，不会崩）
+opencv-python>=4.8        # 面部：YuNet(DNN) / Haar 降级
+mediapipe>=0.10           # 面部：FaceLandmarker(Tasks API)；1.x 已移除 mp.solutions
+librosa>=0.10             # 语音：F0/能量/停顿/jitter/shimmer/HNR
+sounddevice>=0.4          # 语音：麦克风采集
+
+# ① 感知层 · 语义（可选，需设 EC_ENABLE_TRANSFORMERS=1 才启用）
+transformers>=4.30
+
+# 开发/测试
+pytest>=7.0
+ruff>=0.5

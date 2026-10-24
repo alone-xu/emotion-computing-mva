@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emotion-computing"
+version = "0.1.0"
+description = "多模态情感计算 MVA：面部表情 + 语义 + 语音的紧张度实时估计、短期预测与记忆复盘"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "emotion-computing contributors" }]
+keywords = [
+    "affective-computing",
+    "multimodal",
+    "stress-estimation",
+    "explainable-ai",
+    "online-inference",
+    "python",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+perception = [
+    "opencv-python>=4.8",
+    "mediapipe>=0.10",
+    "librosa>=0.10",
+    "sounddevice>=0.4",
+]
+text = ["transformers>=4.30"]
+dev = ["pytest>=7.0", "ruff>=0.5"]
+
+[project.scripts]
+emotion-computing = "emotion_computing.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# 只开"确定性高、不会因为风格偏好误报"的规则：语法错误 + pyflakes。
+# 刻意不启用样式类规则，避免 CI 因为换行/引号风格大红。
+select = ["E4", "E7", "E9", "F"]

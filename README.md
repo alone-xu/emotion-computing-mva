@@ -1,9 +1,47 @@
 # 多模态情感计算系统（MVA）
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+
 > 一个**本地运行**、**可解释**、**多模态**的紧张度实时估计与短期预测系统，
 > 带**跨会话记忆**与**分级干预行动**。用于高压任务中判断与改善人的可继续执行性。
 
 数据流严格按五层顺序：**感知 → 快系统 → 轻量慢系统 → 记忆 → 行动**。
+
+> CI 配置见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：push 后自动在
+> Python 3.10–3.13（Linux）+ Windows 3.12 上跑 157 项测试和端到端冒烟。
+
+## 先看这三样（不用装环境）
+
+| 想看什么 | 去哪看 |
+|---|---|
+| **系统输出长什么样** | 下面这张图 + [`examples/real-data-run/report.md`](examples/real-data-run/report.md)（**真实音频**跑出的一次会话复盘）+ [`examples/ravdess-audit/audit_report.md`](examples/ravdess-audit/audit_report.md)（对这批跑批的审核报告）+ [`dashboard.html`](examples/ravdess-audit/dashboard.html)（双击用浏览器打开） |
+| **哪些需求真做了、哪些没做** | [`docs/05-implementation-status.md`](docs/05-implementation-status.md) —— 逐条需求 × 状态 × 代码位置 |
+| **怎么自己验证这些说法** | `python -m pytest tests -q`（157 项）、`python scripts/demo_end_to_end.py`、`python scripts/check_environment.py` |
+
+![一次会话的紧张度曲线](docs/assets/session-timeline.svg)
+
+<sub>这张图是 `python scripts/export_demo_chart.py --episodes <episodes.jsonl> --episode-id ef18721606fb` 从**一次真实音频会话**导出的（RAVDESS，`face=yunet` / `speech=librosa` 都是真跑的）：紧张度曲线、两档阈值、静息基线、干预触发点（C/M/P 三种动作）。演员表演的语音不等于真实高压任务，所以这张图只说明"输出长这样"，**不是效果证据**。</sub>
+
+---
+
+## 0. 为什么做这个
+
+想做这件事的直接原因，是现有两类工具都没解决同一个问题：
+
+- **情绪/压力类产品**大多只给一个瞬时分数，没有记忆——每次打开都像第一次见你，
+  更说不清"上次这个情境你是什么反应"；
+- **科研侧的方案**则常常是高精度模型 + 黑箱，落到"这个人现在还能不能继续干活"这种
+  具体决策上时，你没法解释为什么建议他休息。
+
+所以这里反过来试一次：**不训练大模型**，只用可解释的统计方法（EWMA / Theil–Sen / CUSUM / OU 预测），
+再加上一层真正会学习的记忆（阈值、基线、干预有效性都能回写并给出依据）。
+验证的核心问题不是"准不准"——没有标注数据就不该谈准不准——而是
+**这套闭环能不能跑通、每个结论能不能追溯到原因**。
+
+也正因为这个立场，本仓库里所有"效果"相关的数字都被刻意标注为未验证（`UNVALIDATED`、`Forecast.validated=False`），
+并且专门写了一层审核流水线来回答"到底哪一层出了问题"。这两件事是这个项目里最花心思的部分，
+比任何指标都更能说明它不是一个演示玩具。
 
 ---
 
@@ -94,12 +132,14 @@ python scripts/check_environment.py
 python scripts/demo_end_to_end.py
 ```
 
-演示会跑两次同类任务会话（合成信号），并验证：
+演示会跑两次同类任务会话（合成信号），产物写在 `data/demo/`（**不会碰**你已有的会话数据），并验证：
 
-- 产物落盘（`episodes.jsonl` / `index.jsonl` / `profile.json` / `reports/*.md`）
-- **跨会话记忆生效**（第 2 次会话的报告中出现历史对比）
-- **个性化回写生效**（`profile.json` 的 `sessions`、`resilience`）
-- **隐私约束**（样本中不含任何原始音视频/文本字段）
+- 产物落盘（`episodes.jsonl` / `index.jsonl` / `index.sqlite` / `profile.json` / `reports/*.md`）
+- **跨会话记忆生效**（第 2 次会话的报告中出现历史对比，且检索命中会影响行动层决策）
+- **个性化回写生效**（`profile.json` 的 `sessions`、`resilience`、`baseline_mu/sigma`、
+  `theta_mid/theta_hi/tau_rev` 真被学习过，依据写在 `threshold_evidence` 里）
+- **崩溃安全**（会话中途被杀，重启后残留检查点被标为 `aborted`，样本不丢）
+- **隐私约束**（样本中不含任何原始音视频/文本字段；`notes` 只允许结构化短标签）
 
 > 演示用的是**合成信号**，只验证管线连通性，**不能用于评估任何效果指标**。
 
@@ -117,6 +157,13 @@ python -m emotion_computing.cli demo --duration 540 --task-outcome 0.7
 python -m emotion_computing.cli episodes
 python -m emotion_computing.cli report <episode_id>
 python -m emotion_computing.cli clear --yes
+
+# 记忆维护
+python -m emotion_computing.cli profile          # 画像 + 阈值学习依据
+python -m emotion_computing.cli index-health     # 缺字段旧索引告警
+python -m emotion_computing.cli reindex          # 重建 index.jsonl + index.sqlite
+python -m emotion_computing.cli delete <id> --yes
+python -m emotion_computing.cli recover          # 崩溃残留 running → aborted
 
 # 审核流水线（见 §7）
 python -m emotion_computing.cli audit data --input dataset.json
@@ -157,6 +204,25 @@ python -m emotion_computing.cli audit log --sample-id <id>
    旧 objdetect API，Haar 路径不可用；但 `cv2.FaceDetectorYN`（DNN）仍保留，
    因此把 YuNet 插进了降级链；
 3. **`storage.googleapis.com` 在国内网络直连超时** —— MediaPipe 模型需手动放入 `models/`。
+
+### 真实音频跑批（不是合成信号）
+
+用 RAVDESS（`Actor_01..03` 的**真实语音**，逐帧喂进 `SessionPipeline`）跑了 **26 个会话**，
+`task_label=ravdess_real`，全部会话实际生效的后端都是
+`face=yunet` / `speech=librosa` / `text=lexicon`。
+
+| 指标 | 26 次真实音频会话的范围 |
+|---|---|
+| 紧张度均值 | 0.059 ~ 0.276 |
+| 紧张度峰值 | 0.115 ~ 0.683 |
+| 单会话样本数 | 26 ~ 118（每条语音片段长度不同） |
+
+其中信号最丰富的一条（峰值 0.683、触发 2 次干预、跨会话对比 3 条）完整报告在
+[`examples/real-data-run/report.md`](examples/real-data-run/report.md)。
+
+> RAVDESS 是**演员按剧本表演**的语音，不是真实高压任务，更不是真人受试者。
+> 这批跑批只能证明"真实信号 → 特征 → 融合 → 状态机 → 干预 → 复盘"这条链子在真实输入上不崩，
+> **不构成任何效果证据**。边界写在 [`examples/real-data-run/README.md`](examples/real-data-run/README.md)。
 
 ### 需要下载的模型
 
@@ -329,16 +395,24 @@ print(report.failure_distribution.top_repair)  # 下一步该改什么
 
 ```
 emotion-computing/
+├── .github/workflows/ci.yml     # CI：3.10–3.13 × Linux + 一个 Windows job
 ├── docs/
 │   ├── 01-requirements.md      # 需求文档（唯一需求依据）
-│   └── 02-architecture.md      # 架构设计（契约/算法/时序/降级）
+│   ├── 02-architecture.md      # 架构设计（契约/算法/时序/降级）
+│   ├── 03-audit-requirements.md
+│   ├── 04-audit-architecture.md
+│   ├── 05-implementation-status.md  # ★ 需求实现状态矩阵（哪些做了、哪些没做）
+│   └── assets/                 # README 用图
+├── examples/                   # ★ 真实产物样例（不用跑就能看）
+│   ├── real-data-run/          #   真实音频驱动的一次会话复盘
+│   └── ravdess-audit/          #   一次 RAVDESS 跑批的审核报告 + dashboard
 ├── src/emotion_computing/
 │   ├── contracts.py            # ★ 全部跨层数据契约（含审核层）
-│   ├── config.py               # 配置与个体画像
+│   ├── config.py               # 配置与个体画像（原子写 + 损坏备份）
 │   ├── perception/             # ① 感知
 │   ├── fast_system/            # ② 快系统
 │   ├── slow_system/            # ③ 轻量慢系统
-│   ├── memory/                 # ④ 记忆
+│   ├── memory/                 # ④ 记忆（JSONL 日志 + SQLite 索引 + 隐私门）
 │   ├── action/                 # ⑤ 行动
 │   ├── audit/                  # ★ 审核流水线（D/M/F/V/I/L 六大需求）
 │   │   ├── metrics.py          #   指标：CCC/RMSE/F1/Krippendorff α
@@ -355,10 +429,11 @@ emotion-computing/
 ├── scripts/
 │   ├── check_environment.py    # 探测本机可用后端
 │   ├── download_models.py      # 下载模型权重（多源回退）
-│   ├── demo_end_to_end.py      # 端到端演示
+│   ├── demo_end_to_end.py      # 端到端演示（含断言）
+│   ├── export_demo_chart.py    # 导出 README 那张曲线图（纯 SVG，无额外依赖）
 │   ├── validate_real_data.py   # 公开数据集驱动的真实数据验证
 │   └── audit_real_data.py      # 真实数据审核流水线
-├── tests/                      # 单元测试（128 项）
+├── tests/                      # 单元测试（157 项）
 ├── models/                     # 模型权重（可选，已 gitignore）
 └── data/                       # 运行时产物（已 gitignore）
 ```
@@ -379,9 +454,31 @@ emotion-computing/
 
 ## 11. 后续路线
 
+已经做完的（留在这里是为了让路线图看得出进度，而不是永远不动的许愿池）：
+
+- [x] 记忆层：阈值/基线真正自适应回写 + SQLite 索引 + 崩溃检查点
+- [x] 记忆回流到决策（不再只写进复盘报告）
+- [x] 慢系统输出主导模态归因（L-5）
+
+还没做的：
+
 - [ ] 用真实标注数据校准特征阈值与融合权重（解除 `UNVALIDATED`）；
 - [ ] 预测模型回测（MAE / 方向准确率）；
-- [ ] ASR 接入（faster-whisper）提升语义模态覆盖率；
+- [ ] ASR 接入（faster-whisper）提升语义模态覆盖率（P-5，当前语义只吃外部文本）；
 - [ ] 更丰富的面部 AU 特征（需要更多人脸关键点或专门的 AU 模型）；
+- [ ] 严格的逐周期 shimmer（现在是帧级振幅微扰代理，见 P-3）；
 - [ ] 干预有效性的多会话 A/B 跟踪；
 - [ ] 审核层：人工修正回写闭环（`AuditLogEntry.human_attribution` → 自动重算指标）。
+
+---
+
+## 12. 许可证与数据声明
+
+- 代码：[MIT](LICENSE)。
+- `examples/` 里的产物是本系统自己生成的派生结果，随代码一并 MIT。
+- 仓库**不分发**任何公开数据集的原始音频；脚本引用的 RAVDESS 数据集遵循其自身的
+  CC BY-NC-SA 4.0（仅限非商业研究），请从官方渠道获取并遵守其条款。
+- 模型权重不入库，由 `scripts/download_models.py` 从上游下载，遵循各自上游许可。
+
+> 本项目**没有**采集、也没有分发任何真人受试者的数据；
+> 所有示例会话都是合成驱动或公开表演数据集，不涉及个人隐私数据。

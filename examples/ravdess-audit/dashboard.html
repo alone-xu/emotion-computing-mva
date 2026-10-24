@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MVA 审核仪表盘 · c4f3b5311c</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         margin: 0; background: #f7f8fa; color: #1f2330; }
+  header { background: #1f2330; color: #fff; padding: 18px 24px; }
+  header h1 { margin: 0 0 4px 0; font-size: 18px; }
+  header .meta { font-size: 12px; opacity: 0.85; }
+  main { padding: 18px 24px; max-width: 1280px; margin: 0 auto; }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  .card { background: #fff; border-radius: 8px; padding: 14px 16px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .card h2 { font-size: 14px; margin: 0 0 10px 0; color: #1f2330; }
+  .metric-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+  .metric { background: #f0f2f7; padding: 8px 12px; border-radius: 6px;
+            font-size: 13px; min-width: 90px; }
+  .metric .v { font-size: 18px; font-weight: 600; color: #1f2330; }
+  .metric.fail .v { color: #c43c3c; }
+  .metric.warn .v { color: #c08a2c; }
+  .metric.ok .v { color: #1a8754; }
+  .canvas-box { height: 320px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef0f4; }
+  th { background: #f0f2f7; color: #555; font-weight: 600; }
+  .small { font-size: 11px; color: #888; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
+            font-size: 11px; font-weight: 500; color: #fff; }
+  .badge.fail { background: #c43c3c; }
+  .badge.warn { background: #c08a2c; }
+  .badge.ok   { background: #1a8754; }
+  .badge.easy { background: #2563b7; }
+  .badge.hard { background: #6b7280; }
+  footer { padding: 16px 24px; font-size: 11px; color: #888;
+            border-top: 1px solid #eef0f4; margin-top: 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MVA 审核仪表盘 · c4f3b5311c</h1>
+  <div class="meta">
+    数据集 <b>ravdess</b> ·
+    样本 <b>200</b> ·
+    错误 <b>87</b> ·
+    生成时间 <b>2026-10-10T11:14:42+08:00</b>
+  </div>
+</header>
+<main>
+  <div class="metric-row" id="metricRow"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>失败分布（F-3）</h2>
+      <div class="canvas-box"><canvas id="pieChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>修复优先级（I-1）</h2>
+      <div class="canvas-box"><canvas id="prioChart"></canvas></div>
+    </div>
+    <div class="card" style="grid-column: 1 / span 2;">
+      <h2>模块指标雷达（M-1）</h2>
+      <div class="canvas-box"><canvas id="radarChart"></canvas></div>
+    </div>
+    <div class="card" style="grid-column: 1 / span 2;">
+      <h2>失败样本（前 30 条）</h2>
+      <table id="failTable">
+        <thead>
+          <tr>
+            <th>样本ID</th><th>误差</th><th>系统归因</th>
+            <th>主导模态</th><th>破坏者</th>
+            <th>fused</th><th>gold</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="small">* 完整归因与人工修正区见 audit_report.md</div>
+    </div>
+    <div class="card" style="grid-column: 1 / span 2;">
+      <h2>跨迭代趋势（I-2）</h2>
+      <div class="canvas-box"><canvas id="iterChart"></canvas></div>
+    </div>
+  </div>
+</main>
+<footer>
+  MVA-Audit v0.1 · 详见 docs/03-audit-requirements.md 与 docs/04-audit-architecture.md。
+  报告基于有限测试集与启发式指标；最终判断须由人工复核。
+</footer>
+
+<script>
+const DATA = {"pie": {"labels": ["感知失败", "模态破坏", "评估失败", "记忆干扰", "策略失败", "数据问题", "组合失败"], "values": [0, 6, 0, 0, 0, 0, 81]}, "prio": {"labels": ["模态破坏", "组合失败"], "values": [6.9, 93.1], "feasibility": ["easy", "hard"]}, "radar": {"labels": ["ccc", "rmse", "mae", "f1_watch_pause", "miss_rate", "precision_at_3", "mean_score"], "series": [{"name": "perception", "values": [0.044, 0.0, 0.352, 0.0, 0.0, 0.0, 0.0]}, {"name": "fast_system", "values": [0.066, 0.493, 0.639, 0.0, 0.0, 0.0, 0.0]}, {"name": "slow_system", "values": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]}, {"name": "memory", "values": [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]}, {"name": "action", "values": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5]}]}, "timeline": {"rows": [{"sample_id": "1a708ba0f996_t30", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.565, "gold": 0.115}, {"sample_id": "1a708ba0f996_t32", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.383, "gold": 0.083}, {"sample_id": "1a708ba0f996_t35", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.524, "gold": 0.074}, {"sample_id": "1a708ba0f996_t37", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.378, "gold": 0.078}, {"sample_id": "1a708ba0f996_t40", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.541, "gold": 0.091}, {"sample_id": "1a708ba0f996_t42", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.38, "gold": 0.08}, {"sample_id": "1a708ba0f996_t45", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.537, "gold": 0.087}, {"sample_id": "1a708ba0f996_t47", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.382, "gold": 0.082}, {"sample_id": "1a708ba0f996_t50", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.534, "gold": 0.084}, {"sample_id": "1a708ba0f996_t52", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.39, "gold": 0.09}, {"sample_id": "1a708ba0f996_t55", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.544, "gold": 0.094}, {"sample_id": "1a708ba0f996_t57", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.414, "gold": 0.114}, {"sample_id": "1a708ba0f996_t60", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.623, "gold": 0.173}, {"sample_id": "1a708ba0f996_t62", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.477, "gold": 0.177}, {"sample_id": "1a708ba0f996_t65", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.607, "gold": 0.157}, {"sample_id": "1a708ba0f996_t67", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.469, "gold": 0.169}, {"sample_id": "1a708ba0f996_t70", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.63, "gold": 0.18}, {"sample_id": "1a708ba0f996_t72", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.488, "gold": 0.188}, {"sample_id": "1a708ba0f996_t75", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.633, "gold": 0.183}, {"sample_id": "1a708ba0f996_t76", "error": 0.22, "attribution": "modality_sabotage", "attribution_zh": "模态破坏", "dominant": "face", "saboteur": "face", "fused": 0.0, "gold": 0.22}, {"sample_id": "1a708ba0f996_t77", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.497, "gold": 0.197}, {"sample_id": "1a708ba0f996_t80", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.659, "gold": 0.209}, {"sample_id": "1a708ba0f996_t82", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.537, "gold": 0.237}, {"sample_id": "1a708ba0f996_t85", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.64, "gold": 0.19}, {"sample_id": "1a708ba0f996_t86", "error": 0.205, "attribution": "modality_sabotage", "attribution_zh": "模态破坏", "dominant": "face", "saboteur": "face", "fused": 0.0, "gold": 0.205}, {"sample_id": "1a708ba0f996_t87", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.504, "gold": 0.204}, {"sample_id": "1a708ba0f996_t90", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.644, "gold": 0.194}, {"sample_id": "1a708ba0f996_t92", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.502, "gold": 0.202}, {"sample_id": "1a708ba0f996_t95", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.676, "gold": 0.226}, {"sample_id": "1a708ba0f996_t96", "error": 0.23, "attribution": "modality_sabotage", "attribution_zh": "模态破坏", "dominant": "face", "saboteur": "face", "fused": 0.0, "gold": 0.23}, {"sample_id": "1a708ba0f996_t97", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.508, "gold": 0.208}, {"sample_id": "1a708ba0f996_t100", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.616, "gold": 0.166}, {"sample_id": "1a708ba0f996_t102", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.469, "gold": 0.169}, {"sample_id": "1a708ba0f996_t105", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.594, "gold": 0.144}, {"sample_id": "1a708ba0f996_t107", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.433, "gold": 0.133}, {"sample_id": "1a708ba0f996_t110", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.588, "gold": 0.138}, {"sample_id": "69ee98043ed9_t30", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.565, "gold": 0.115}, {"sample_id": "69ee98043ed9_t32", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.383, "gold": 0.083}, {"sample_id": "69ee98043ed9_t35", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.524, "gold": 0.074}, {"sample_id": "69ee98043ed9_t37", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.378, "gold": 0.078}, {"sample_id": "69ee98043ed9_t40", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.541, "gold": 0.091}, {"sample_id": "69ee98043ed9_t42", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.38, "gold": 0.08}, {"sample_id": "69ee98043ed9_t45", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.537, "gold": 0.087}, {"sample_id": "69ee98043ed9_t47", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.382, "gold": 0.082}, {"sample_id": "69ee98043ed9_t50", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.534, "gold": 0.084}, {"sample_id": "69ee98043ed9_t52", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.39, "gold": 0.09}, {"sample_id": "69ee98043ed9_t55", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.544, "gold": 0.094}, {"sample_id": "69ee98043ed9_t57", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.414, "gold": 0.114}, {"sample_id": "69ee98043ed9_t60", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.623, "gold": 0.173}, {"sample_id": "69ee98043ed9_t62", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.477, "gold": 0.177}, {"sample_id": "69ee98043ed9_t65", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.607, "gold": 0.157}, {"sample_id": "69ee98043ed9_t67", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.469, "gold": 0.169}, {"sample_id": "69ee98043ed9_t70", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.63, "gold": 0.18}, {"sample_id": "69ee98043ed9_t72", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.488, "gold": 0.188}, {"sample_id": "69ee98043ed9_t75", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.633, "gold": 0.183}, {"sample_id": "69ee98043ed9_t76", "error": 0.22, "attribution": "modality_sabotage", "attribution_zh": "模态破坏", "dominant": "face", "saboteur": "face", "fused": 0.0, "gold": 0.22}, {"sample_id": "69ee98043ed9_t77", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.497, "gold": 0.197}, {"sample_id": "69ee98043ed9_t80", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.659, "gold": 0.209}, {"sample_id": "69ee98043ed9_t82", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.537, "gold": 0.237}, {"sample_id": "69ee98043ed9_t85", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.64, "gold": 0.19}, {"sample_id": "69ee98043ed9_t86", "error": 0.205, "attribution": "modality_sabotage", "attribution_zh": "模态破坏", "dominant": "face", "saboteur": "face", "fused": 0.0, "gold": 0.205}, {"sample_id": "69ee98043ed9_t87", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.504, "gold": 0.204}, {"sample_id": "69ee98043ed9_t90", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.644, "gold": 0.194}, {"sample_id": "69ee98043ed9_t92", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.502, "gold": 0.202}, {"sample_id": "69ee98043ed9_t95", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.676, "gold": 0.226}, {"sample_id": "69ee98043ed9_t96", "error": 0.23, "attribution": "modality_sabotage", "attribution_zh": "模态破坏", "dominant": "face", "saboteur": "face", "fused": 0.0, "gold": 0.23}, {"sample_id": "69ee98043ed9_t97", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.508, "gold": 0.208}, {"sample_id": "69ee98043ed9_t100", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.616, "gold": 0.166}, {"sample_id": "69ee98043ed9_t102", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.469, "gold": 0.169}, {"sample_id": "69ee98043ed9_t105", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.594, "gold": 0.144}, {"sample_id": "69ee98043ed9_t107", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.433, "gold": 0.133}, {"sample_id": "69ee98043ed9_t110", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.588, "gold": 0.138}, {"sample_id": "d1184e18c166_t30", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.565, "gold": 0.115}, {"sample_id": "d1184e18c166_t32", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.383, "gold": 0.083}, {"sample_id": "d1184e18c166_t35", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.524, "gold": 0.074}, {"sample_id": "d1184e18c166_t37", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.378, "gold": 0.078}, {"sample_id": "d1184e18c166_t40", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.541, "gold": 0.091}, {"sample_id": "d1184e18c166_t42", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.38, "gold": 0.08}, {"sample_id": "d1184e18c166_t45", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.537, "gold": 0.087}, {"sample_id": "d1184e18c166_t47", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.382, "gold": 0.082}, {"sample_id": "d1184e18c166_t50", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.534, "gold": 0.084}, {"sample_id": "d1184e18c166_t52", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.39, "gold": 0.09}, {"sample_id": "d1184e18c166_t55", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.544, "gold": 0.094}, {"sample_id": "84b509905472_t30", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.565, "gold": 0.115}, {"sample_id": "84b509905472_t32", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.383, "gold": 0.083}, {"sample_id": "84b509905472_t35", "error": 0.45, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.524, "gold": 0.074}, {"sample_id": "84b509905472_t37", "error": 0.3, "attribution": "combined_failure", "attribution_zh": "组合失败", "dominant": "face", "saboteur": "-", "fused": 0.378, "gold": 0.078}]}, "iter": [], "summary": {"n_samples": 200, "n_errors": 87, "error_rate": 43.5, "generated_at": "2026-10-10T11:14:42+08:00", "dataset_name": "ravdess"}};
+</script>
+<script>
+/*! chart.js v4.4.0 | MIT License *//* placeholder; see generate_dashboard for inline injection */
+</script>
+<script>
+// === 简易 Chart.js 包装（若 Chart.js 已加载则用之，否则用纯 SVG fallback） ===
+
+function renderMetricRow() {
+  const row = document.getElementById('metricRow');
+  const s = DATA.summary;
+  const items = [
+    {k: '样本数', v: s.n_samples, cls: ''},
+    {k: '错误数', v: s.n_errors, cls: s.n_errors > 0 ? 'fail' : 'ok'},
+    {k: '错误率', v: s.error_rate + '%', cls: s.error_rate > 30 ? 'fail' : (s.error_rate > 15 ? 'warn' : 'ok')},
+    {k: '数据集', v: s.dataset_name, cls: ''},
+  ];
+  row.innerHTML = items.map(it =>
+    `<div class="metric ${it.cls}"><div class="k">${it.k}</div><div class="v">${it.v}</div></div>`
+  ).join('');
+}
+
+function renderFailureTable() {
+  const tbody = document.querySelector('#failTable tbody');
+  const rows = DATA.timeline.rows.slice(0, 30);
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.sample_id}</td>
+      <td>${r.error.toFixed(3)}</td>
+      <td>${r.attribution_zh}</td>
+      <td>${r.dominant}</td>
+      <td>${r.saboteur}</td>
+      <td>${r.fused === null ? '-' : r.fused.toFixed(3)}</td>
+      <td>${r.gold === null ? '-' : r.gold.toFixed(3)}</td>
+    </tr>
+  `).join('');
+}
+
+function fallbackPie() {
+  const c = document.getElementById('pieChart');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const total = DATA.pie.values.reduce((a, b) => a + b, 0) || 1;
+  let y = 18;
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#1f2330';
+  ctx.fillText('失败类型分布（无 Chart.js fallback）', 8, 14);
+  DATA.pie.labels.forEach((lab, i) => {
+    const v = DATA.pie.values[i];
+    if (v === 0) return;
+    const w = (v / total) * 280;
+    ctx.fillStyle = '#' + ['c43c3c','c08a2c','1a8754','2563b7','6b7280','b34d8a','5a4dc3'][i % 7];
+    ctx.fillRect(8, y, w, 14);
+    ctx.fillStyle = '#1f2330';
+    ctx.fillText(`${lab} (${v})`, 8 + w + 4, y + 11);
+    y += 20;
+  });
+}
+
+function fallbackBar() {
+  const c = document.getElementById('prioChart');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#1f2330';
+  ctx.fillText('修复优先级（无 Chart.js fallback）', 8, 14);
+  const max = Math.max(1, ...DATA.prio.values);
+  let y = 30;
+  DATA.prio.labels.forEach((lab, i) => {
+    const v = DATA.prio.values[i];
+    const w = (v / max) * 220;
+    ctx.fillStyle = DATA.prio.feasibility[i] === 'easy' ? '#2563b7' : '#6b7280';
+    ctx.fillRect(60, y, w, 14);
+    ctx.fillStyle = '#1f2330';
+    ctx.fillText(lab.slice(0, 6), 8, y + 11);
+    ctx.fillText(v.toFixed(1) + '%', 60 + w + 4, y + 11);
+    y += 22;
+  });
+}
+
+function fallbackRadar() {
+  const c = document.getElementById('radarChart');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#1f2330';
+  ctx.fillText('模块指标雷达（无 Chart.js fallback）', 8, 14);
+  let y = 30;
+  DATA.radar.series.forEach(s => {
+    ctx.fillText(s.name, 8, y);
+    y += 16;
+    const avg = s.values.reduce((a, b) => a + b, 0) / Math.max(1, s.values.length);
+    ctx.fillRect(60, y - 10, avg * 200, 10);
+    y += 8;
+  });
+}
+
+function fallbackIter() {
+  const c = document.getElementById('iterChart');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#1f2330';
+  ctx.fillText('跨迭代趋势（无 Chart.js fallback）', 8, 14);
+  let y = 30;
+  DATA.iter.forEach(it => {
+    ctx.fillText((it.metric || '?') + ': ' + (it.curr || '-'), 8, y);
+    y += 16;
+  });
+}
+
+function init() {
+  renderMetricRow();
+  renderFailureTable();
+  if (typeof Chart === 'undefined') {
+    console.warn('Chart.js 未加载，使用 SVG/Canvas fallback');
+    fallbackPie();
+    fallbackBar();
+    fallbackRadar();
+    fallbackIter();
+    return;
+  }
+  new Chart(document.getElementById('pieChart'), {
+    type: 'doughnut',
+    data: {
+      labels: DATA.pie.labels,
+      datasets: [{ data: DATA.pie.values,
+        backgroundColor: ['#c43c3c','#c08a2c','#1a8754','#2563b7','#6b7280','#b34d8a','#5a4dc3'] }],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'right' } } },
+  });
+  new Chart(document.getElementById('prioChart'), {
+    type: 'bar',
+    data: {
+      labels: DATA.prio.labels,
+      datasets: [{ label: '占比 %', data: DATA.prio.values,
+        backgroundColor: DATA.prio.feasibility.map(f => f === 'easy' ? '#2563b7' : '#6b7280') }],
+    },
+    options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                plugins: { legend: { display: false } } },
+  });
+  new Chart(document.getElementById('radarChart'), {
+    type: 'radar',
+    data: {
+      labels: DATA.radar.labels,
+      datasets: DATA.radar.series.map((s, i) => ({
+        label: s.name,
+        data: s.values,
+        backgroundColor: 'rgba(31,35,48,0.1)',
+        borderColor: ['#c43c3c','#1a8754','#2563b7','#c08a2c','#5a4dc3'][i % 5],
+        pointBackgroundColor: ['#c43c3c','#1a8754','#2563b7','#c08a2c','#5a4dc3'][i % 5],
+      })),
+    },
+    options: { responsive: true, maintainAspectRatio: false, scales: { r: { min: 0, max: 1 } } },
+  });
+  if (DATA.iter.length > 0) {
+    const metrics = [...new Set(DATA.iter.map(it => it.metric))];
+    const iters = DATA.iter.map((_, i) => '#' + (i + 1));
+    new Chart(document.getElementById('iterChart'), {
+      type: 'line',
+      data: {
+        labels: iters,
+        datasets: metrics.map((m, i) => ({
+          label: m,
+          data: DATA.iter.filter(it => it.metric === m).map(it => parseFloat(it.curr) || 0),
+          borderColor: ['#c43c3c','#1a8754','#2563b7','#c08a2c','#5a4dc3'][i % 5],
+          fill: false, tension: 0.2,
+        })),
+      },
+      options: { responsive: true, maintainAspectRatio: false },
+    });
+  } else {
+    fallbackIter();
+  }
+}
+init();
+</script>
+</body>
+</html>
